@@ -22,11 +22,13 @@ public class farlab_logger : MonoBehaviour
      * 2) name - this is the name of the variable, this will be the column header
      * for the variable values in the log file
      * 3) val - this is the value of the variable
+     * 4) updateMethod - this is the method which is called to update the value of the variable. This method must return a string.
      *
-     * To log a variable you need to do 3 things :-
-     * 1) Declare a global LogVariable object
-     * 2) Initialize this object using its constructor in the function Start
-     * 3) Set the value of this object using the SetVal method in function Update
+     * To log a variable you need to provide three things :-
+     * 1) Dataset ID
+     * 2) Variable Name
+     * 3) Update method or its value
+     * Have a look at the examples in the Awake function.
      **/
     public class LogVariable
 
@@ -34,16 +36,29 @@ public class farlab_logger : MonoBehaviour
         private string dat_id;
         private string name;
         private string val;
+        private Func<string> updateMethod;
         private static List<LogVariable> allVars = new List<LogVariable>();
         private static List<string> IDs = new List<string>();
 
-      
+
 
         public LogVariable(string dataset_id, string header_name, string value = "-")
         {
             this.dat_id = dataset_id;
             this.name = header_name;
             this.val = value;
+            this.updateMethod = null;
+            if (!IDs.Contains(dataset_id) && !dataset_id.Equals("U")) IDs.Add(dataset_id);
+            allVars.Add(this);
+            allVars.Sort(CompareByDatId);
+
+        }
+
+        public LogVariable(string dataset_id, string header_name, Func<string> updtMethod)
+        {
+            this.dat_id = dataset_id;
+            this.name = header_name;
+            this.updateMethod = updtMethod;
             if (!IDs.Contains(dataset_id) && !dataset_id.Equals("U")) IDs.Add(dataset_id);
             allVars.Add(this);
             allVars.Sort(CompareByDatId);
@@ -131,6 +146,11 @@ public class farlab_logger : MonoBehaviour
             this.val = value;
         }
 
+        public void updateVal()
+        {
+            this.val = this.updateMethod();
+        }
+
         public void SetName(string name)
         {
             this.name = name;
@@ -153,10 +173,11 @@ public class farlab_logger : MonoBehaviour
 
         public string GetVal()
         {
+            if (updateMethod != null) updateVal();
             return this.val;
         }
     }
-    
+
     private Queue<string> databuffer = new Queue<string>(); //Data buffer queue
 
     private string path; //Location of the log files
@@ -175,44 +196,31 @@ public class farlab_logger : MonoBehaviour
     NetworkStream stream; //To store the stream from the device
 
 
-    //Step 1 - Declare global LogVariable objects
-    //LogVariable pos;
-    LogVariable vel;
-    LogVariable time;
-    LogVariable frame;
-    LogVariable sp;
-    LogVariable dist;
-
-    //End Step 1
-
     // Use this for initialization
     private void Awake()
     {
-        time = new LogVariable("U", "Time");
-        sp = new LogVariable("D2", "Speed");
-        vel = new LogVariable("D1", "Velocity");
-        dist = new LogVariable("D2", "Distance");
-        frame = new LogVariable("U", "Frame");
+        //Example of logging various different variables.
+        player = GameObject.Find("Player");
+        LogVariable time = new LogVariable("U", "Time", delegate() {return Time.time.ToString(); });
+        LogVariable vel = new LogVariable("D2", "Velocity", delegate() { return player.transform.GetComponent<Rigidbody>().velocity.ToString(); });
+        LogVariable sp = new LogVariable("D1", "Speed", delegate () { return player.transform.GetComponent<Rigidbody>().velocity.magnitude.ToString(); });
+        LogVariable dist = new LogVariable("D1", "Distance", delegate () { return player.transform.position.magnitude.ToString(); });
+        LogVariable frame = new LogVariable("U", "Frame", delegate () { return Time.frameCount.ToString(); });
+        LogVariable pos = new LogVariable("D2", "Position", delegate () { return player.transform.position.ToString(); });
+    
     }
     void Start()
     {
-      
-        player = GameObject.Find("Player");
-
-        //Step 2 - Initialize LogVariable objects using their constructors
-        
-
-        //End Step 2
 
 
         int epoch = (int)(System.DateTime.UtcNow - new System.DateTime(1970, 1, 1)).TotalSeconds; //Epoch Time
 
-        path = @"C:\Users\Public\Documents\Unity Projects\Roll a Ball\Roll a Ball\Logs\" + epoch.ToString() + "-"; //Log file path
+        path = @"C:\Users\Tejas Advait\Documents\Roll-a-ball\Logs\" + epoch.ToString() + "-"; //Log file path
 
         //path_trig = @"C:\Users\Public\Documents\Unity Projects\Roll a Ball\Roll a Ball\Logs\" + epoch.ToString() + "trig.txt"; //Log file of triggers path;
 
-        port = 23456;
-        ip = "10.132.128.202";
+        //port = 23456;
+        //ip = "10.132.128.68";
 
         InitStream(ip, port);
 
@@ -229,18 +237,10 @@ public class farlab_logger : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        vel.SetVal(GetVelocity().ToString());
-        time.SetVal(GetTime().ToString());
-        frame.SetVal(GetFrame().ToString());
-        sp.SetVal(GetVelocity().magnitude.ToString());
-        dist.SetVal(GetPos(player).magnitude.ToString());
-
-        //Step 3 - Set values of LogVariable objects
-        //End Step 3
     }
     private void LateUpdate()
     {
-       
+
 
         EnqueueData(LogVariable.GetVals());
 
@@ -257,11 +257,14 @@ public class farlab_logger : MonoBehaviour
         CloseLogs();
 
         Debug.Log(GetFrame().ToString());
+        Debug.Log(GetTime().ToString());
+        Debug.Log(GetVelocity(player).ToString());
+        Debug.Log(GetPos(player).ToString());
 
     }
 
     void EnqueueData(List<string> data)
-    { 
+    {
         foreach (string i in data)
         {
             databuffer.Enqueue(i);
@@ -346,12 +349,12 @@ public class farlab_logger : MonoBehaviour
             Debug.Log(e);
             Debug.Log(data);
         }
-                   
+
     }
     //Getting the velocity of the object
-    Vector3 GetVelocity()
+    Vector3 GetVelocity(GameObject obj)
     {
-        return TrackController.Instance.car.transform.GetComponent<Rigidbody>().velocity;
+        return obj.transform.GetComponent<Rigidbody>().velocity;
     }
 
     //Getting the position of the object
@@ -402,17 +405,16 @@ public class farlab_logger : MonoBehaviour
         }
 
         while (databuffer.Count != 0)
-            {
-                dat = databuffer.Dequeue();
-                DataSend(dat, false);
-                dat2 += dat;
-                
-            }
+        {
+            dat = databuffer.Dequeue();
+            DataSend(dat, false);
+            dat2 += dat;
+
+        }
         DataSend(dat2, true);
         doneSending = true;
         Debug.Log(dat);
         Debug.Log(dat2);
 
-        }
-   
+    }
 }
